@@ -2,8 +2,6 @@
 
 VidyaVani converts smartboards into AI-powered teaching assistants to address India’s 11+ lakh teacher shortage. It teaches lessons, generates diagrams, answers doubts, and narrates content in 9 Indian languages using a fully voice-first interface.
 
-Built for **Smart India Hackathon 2024**  
-Team: **NxtGen (RCOEM, Nagpur)**
 
 ---
 

@@ -12,8 +12,11 @@
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.946.0",
     "@aws-sdk/client-polly": "^3.946.0",
+    "@aws-sdk/client-transcribe-streaming": "^3.947.0",
+    "@deepgram/sdk": "^4.11.2",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "node-cache": "^5.1.2"
   }
 }

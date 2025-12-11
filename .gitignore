@@ -1,2 +1,3 @@
 .env
-VidyaVani-backend/.env
+VidyaVani-backend/.env*.env
+.env

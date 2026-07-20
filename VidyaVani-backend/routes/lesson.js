@@ -24,8 +24,8 @@ const lessonCache = new NodeCache({
 });
 
 const audioCache = new NodeCache({ 
-  stdTTL: 3600, // 1 hour for auto-generated audio
-  checkperiod: 600
+  stdTTL: 604800, // 7 days (synchronized with lessonCache)
+  checkperiod: 86400 // 24 hours
 });
 
 let apiCallCount = 0;
@@ -40,6 +40,38 @@ const VALID_LANGUAGES = ['English', 'Hindi', 'Marathi', 'Tamil', 'Telugu', 'Kann
 const MIN_GRADE = 1;
 const MAX_GRADE = 12;
 const MAX_AUDIO_LENGTH = 3000;
+
+// -------------------------------------------------------
+// HELPER: Sanitize Prompt Input (Anti-Prompt Injection)
+// -------------------------------------------------------
+function sanitizePromptInput(text) {
+  if (typeof text !== 'string') return '';
+  
+  // Normalize and clean excessive newlines
+  let clean = text.replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n');
+  
+  // Strip system prompt injection attempts
+  const injectionPatterns = [
+    /ignore\s+(?:all\s+)?previous\s+instructions/gi,
+    /ignore\s+(?:all\s+)?instructions\s+above/gi,
+    /forget\s+(?:all\s+)?previous\s+instructions/gi,
+    /forget\s+my\s+instructions/gi,
+    /system\s+prompt/gi,
+    /you\s+are\s+now\s+a/gi,
+    /instead\s+of\s+what\s+you\s+were/gi,
+    /override\s+instructions/gi,
+    /bypass\s+restrictions/gi
+  ];
+  
+  injectionPatterns.forEach(pattern => {
+    clean = clean.replace(pattern, '[REMOVED]');
+  });
+  
+  // Strip HTML/XML structural delimiters that target common prompt syntax
+  clean = clean.replace(/<\/?(?:system|instruction|user|assistant|prompt|speak|prosody|break)[^>]*>/gi, '');
+
+  return clean.trim();
+}
 
 // -------------------------------------------------------
 // HELPER: Generate Cache Keys
@@ -188,16 +220,21 @@ router.post("/", async (req, res) => {
       return res.status(400).json({ error: "Topic is required" });
     }
 
+    const sanitizedTopic = sanitizePromptInput(topic);
+    if (sanitizedTopic.length === 0) {
+      return res.status(400).json({ error: "Topic cannot be empty or contain invalid characters" });
+    }
+
     const gradeLevel = parseInt(grade) || 6;
     const lang = language || "English";
 
-    const validationErrors = validateInput(topic, gradeLevel, lang);
+    const validationErrors = validateInput(sanitizedTopic, gradeLevel, lang);
     if (validationErrors.length > 0) {
       return res.status(400).json({ errors: validationErrors });
     }
 
     // Check lesson cache
-    const lessonCacheKey = getLessonCacheKey(topic, gradeLevel, lang);
+    const lessonCacheKey = getLessonCacheKey(sanitizedTopic, gradeLevel, lang);
     const cachedLesson = lessonCache.get(lessonCacheKey);
     
     if (cachedLesson) {
@@ -205,7 +242,7 @@ router.post("/", async (req, res) => {
       console.log(`✅ Lesson Cache HIT: ${lessonCacheKey}`);
       
       // Check if audio is also cached
-      const audioCacheKey = getAudioCacheKey(topic, gradeLevel, lang);
+      const audioCacheKey = getAudioCacheKey(sanitizedTopic, gradeLevel, lang);
       let audioData = null;
       
       try {
@@ -240,7 +277,7 @@ router.post("/", async (req, res) => {
 
     while (attempts < maxAttempts && !lessonContent) {
       try {
-        lessonContent = await generateLesson(topic, gradeLevel, lang);
+        lessonContent = await generateLesson(sanitizedTopic, gradeLevel, lang);
         if (!lessonContent || lessonContent.length < 100) {
           lessonContent = null;
           attempts++;
@@ -255,16 +292,16 @@ router.post("/", async (req, res) => {
     }
 
     if (!lessonContent) {
-      lessonContent = generateFallbackContent(topic, gradeLevel, lang);
+      lessonContent = generateFallbackContent(sanitizedTopic, gradeLevel, lang);
     }
 
-    const parsedLesson = parseLesson(lessonContent, topic, gradeLevel);
+    const parsedLesson = parseLesson(lessonContent, sanitizedTopic, gradeLevel);
     
     // Generate quiz
-    const quiz = await generateQuiz(topic, gradeLevel, lang);
+    const quiz = await generateQuiz(sanitizedTopic, gradeLevel, lang);
 
     const lesson = {
-      title: `${topic} - Grade ${gradeLevel}`,
+      title: `${sanitizedTopic} - Grade ${gradeLevel}`,
       ...parsedLesson,
       quiz: quiz,
       language: lang,
@@ -279,7 +316,7 @@ router.post("/", async (req, res) => {
 
     // Generate auto-audio
     let audioData = null;
-    const audioCacheKey = getAudioCacheKey(topic, gradeLevel, lang);
+    const audioCacheKey = getAudioCacheKey(sanitizedTopic, gradeLevel, lang);
     
     try {
       const audioText = `${lesson.title}. ${lesson.introduction} ${lesson.explanation}`;

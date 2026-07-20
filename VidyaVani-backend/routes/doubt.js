@@ -52,6 +52,38 @@ function simpleHash(str) {
 }
 
 // -------------------------------------------------------
+// HELPER: Sanitize Prompt Input (Anti-Prompt Injection)
+// -------------------------------------------------------
+function sanitizePromptInput(text) {
+  if (typeof text !== 'string') return '';
+  
+  // Normalize and clean excessive newlines
+  let clean = text.replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n');
+  
+  // Strip system prompt injection attempts
+  const injectionPatterns = [
+    /ignore\s+(?:all\s+)?previous\s+instructions/gi,
+    /ignore\s+(?:all\s+)?instructions\s+above/gi,
+    /forget\s+(?:all\s+)?previous\s+instructions/gi,
+    /forget\s+my\s+instructions/gi,
+    /system\s+prompt/gi,
+    /you\s+are\s+now\s+a/gi,
+    /instead\s+of\s+what\s+you\s+were/gi,
+    /override\s+instructions/gi,
+    /bypass\s+restrictions/gi
+  ];
+  
+  injectionPatterns.forEach(pattern => {
+    clean = clean.replace(pattern, '[REMOVED]');
+  });
+  
+  // Strip HTML/XML structural delimiters that target common prompt syntax
+  clean = clean.replace(/<\/?(?:system|instruction|user|assistant|prompt|speak|prosody|break)[^>]*>/gi, '');
+
+  return clean.trim();
+}
+
+// -------------------------------------------------------
 // POST /api/doubt - Answer with auto-audio
 // -------------------------------------------------------
 routerDoubt.post("/", async (req, res) => {
@@ -62,21 +94,28 @@ routerDoubt.post("/", async (req, res) => {
       return res.status(400).json({ error: "Question is required" });
     }
 
-    if (question.length > 500) {
+    const sanitizedQuestion = sanitizePromptInput(question);
+    if (sanitizedQuestion.length === 0) {
+      return res.status(400).json({ error: "Question cannot be empty or contain invalid characters" });
+    }
+
+    if (sanitizedQuestion.length > 500) {
       return res.status(400).json({ 
         error: "Question too long (max 500 characters)",
         maxLength: 500,
-        currentLength: question.length
+        currentLength: sanitizedQuestion.length
       });
     }
+
+    const sanitizedTopic = topic ? sanitizePromptInput(topic) : '';
 
     const gradeLevel = parseInt(grade) || 6;
     const lang = language || "English";
 
-    console.log(`❓ Doubt: "${question.substring(0, 50)}..." | Grade: ${gradeLevel} | Lang: ${lang}`);
+    console.log(`❓ Doubt: "${sanitizedQuestion.substring(0, 50)}..." | Grade: ${gradeLevel} | Lang: ${lang}`);
 
     // Check doubt cache
-    const doubtCacheKey = getDoubtCacheKey(question, gradeLevel, lang);
+    const doubtCacheKey = getDoubtCacheKey(sanitizedQuestion, gradeLevel, lang);
     const cachedAnswer = doubtCache.get(doubtCacheKey);
     
     if (cachedAnswer) {
@@ -116,8 +155,8 @@ routerDoubt.post("/", async (req, res) => {
     const prompt = `You are a helpful teacher for grade ${gradeLevel} students.
 ${languageNote}
 
-Student's Question: ${question}
-${topic ? `Related Topic: ${topic}` : ''}
+Student's Question: ${sanitizedQuestion}
+${sanitizedTopic ? `Related Topic: ${sanitizedTopic}` : ''}
 
 Provide a clear, simple answer in ${lang} suitable for grade ${gradeLevel} students.
 - Break down complex concepts into easy steps

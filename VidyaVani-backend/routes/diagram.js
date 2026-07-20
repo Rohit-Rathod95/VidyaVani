@@ -113,6 +113,38 @@ function needsVisualDiagram(topic) {
 }
 
 // -------------------------------------------------------
+// HELPER: Sanitize Prompt Input (Anti-Prompt Injection)
+// -------------------------------------------------------
+function sanitizePromptInput(text) {
+  if (typeof text !== 'string') return '';
+  
+  // Normalize and clean excessive newlines
+  let clean = text.replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n');
+  
+  // Strip system prompt injection attempts
+  const injectionPatterns = [
+    /ignore\s+(?:all\s+)?previous\s+instructions/gi,
+    /ignore\s+(?:all\s+)?instructions\s+above/gi,
+    /forget\s+(?:all\s+)?previous\s+instructions/gi,
+    /forget\s+my\s+instructions/gi,
+    /system\s+prompt/gi,
+    /you\s+are\s+now\s+a/gi,
+    /instead\s+of\s+what\s+you\s+were/gi,
+    /override\s+instructions/gi,
+    /bypass\s+restrictions/gi
+  ];
+  
+  injectionPatterns.forEach(pattern => {
+    clean = clean.replace(pattern, '[REMOVED]');
+  });
+  
+  // Strip HTML/XML structural delimiters that target common prompt syntax
+  clean = clean.replace(/<\/?(?:system|instruction|user|assistant|prompt|speak|prosody|break)[^>]*>/gi, '');
+
+  return clean.trim();
+}
+
+// -------------------------------------------------------
 // MAIN ROUTE - GENERATE DIAGRAM
 // -------------------------------------------------------
 router.post("/", async (req, res) => {
@@ -124,7 +156,12 @@ router.post("/", async (req, res) => {
       return res.status(400).json({ error: "Topic is required" });
     }
 
-    if (topic.length > 200) {
+    const sanitizedTopic = sanitizePromptInput(topic);
+    if (sanitizedTopic.length === 0) {
+      return res.status(400).json({ error: "Topic cannot be empty or contain invalid characters" });
+    }
+
+    if (sanitizedTopic.length > 200) {
       return res.status(400).json({ error: "Topic too long (max 200 characters)" });
     }
 
@@ -140,10 +177,10 @@ router.post("/", async (req, res) => {
     }
 
     // 🔥 CHECK IF TOPIC NEEDS A DIAGRAM
-    const needsDiagram = needsVisualDiagram(topic);
+    const needsDiagram = needsVisualDiagram(sanitizedTopic);
     
     if (!needsDiagram) {
-      console.log(`⚠️  Topic "${topic}" may not need a diagram - skipping to save API calls`);
+      console.log(`⚠️  Topic "${sanitizedTopic}" may not need a diagram - skipping to save API calls`);
       return res.json({ 
         imageBase64: null,
         style: diagramStyle,
@@ -152,10 +189,10 @@ router.post("/", async (req, res) => {
       });
     }
 
-    console.log(`✅ Topic "${topic}" benefits from a visual diagram`);
+    console.log(`✅ Topic "${sanitizedTopic}" benefits from a visual diagram`);
 
     // 🔥 CHECK CACHE FIRST
-    const cacheKey = getDiagramCacheKey(topic, gradeLevel, diagramStyle);
+    const cacheKey = getDiagramCacheKey(sanitizedTopic, gradeLevel, diagramStyle);
     const cachedDiagram = diagramCache.get(cacheKey);
     
     if (cachedDiagram) {
@@ -183,34 +220,34 @@ router.post("/", async (req, res) => {
     // Enhanced prompt styles
     const promptStyles = {
       iconic: {
-        prompt: `Educational icon diagram illustrating ${topic}, simple geometric icons and symbols, arrows showing relationships and flow, minimalist flat design, pastel color palette, white background, infographic style, clear visual hierarchy, suitable for grade ${gradeLevel} students, no text labels, visual communication only`,
+        prompt: `Educational icon diagram illustrating ${sanitizedTopic}, simple geometric icons and symbols, arrows showing relationships and flow, minimalist flat design, pastel color palette, white background, infographic style, clear visual hierarchy, suitable for grade ${gradeLevel} students, no text labels, visual communication only`,
         negative: "text, letters, words, labels, annotations, complex details, realistic photography, cluttered, messy, blurry"
       },
       
       abstract: {
-        prompt: `Abstract visual concept map of ${topic}, flowing organic shapes with connecting lines, modern minimal design, color-coded elements representing different aspects, clean geometric composition, white background, educational infographic aesthetic, suitable for grade ${gradeLevel}, clear visual hierarchy`,
+        prompt: `Abstract visual concept map of ${sanitizedTopic}, flowing organic shapes with connecting lines, modern minimal design, color-coded elements representing different aspects, clean geometric composition, white background, educational infographic aesthetic, suitable for grade ${gradeLevel}, clear visual hierarchy`,
         negative: "text, writing, labels, realistic photography, cluttered, detailed textures, messy"
       },
       
       flow: {
-        prompt: `Flowchart style visualization of ${topic}, colorful rectangular and rounded boxes connected by directional arrows, organized hierarchical layout, clean modern flat design, white background, simple geometric style, process flow diagram, clear progression, suitable for grade ${gradeLevel} education`,
+        prompt: `Flowchart style visualization of ${sanitizedTopic}, colorful rectangular and rounded boxes connected by directional arrows, organized hierarchical layout, clean modern flat design, white background, simple geometric style, process flow diagram, clear progression, suitable for grade ${gradeLevel} education`,
         negative: "text inside boxes, labels, words, annotations, realistic style, photographic, complex details, messy"
       },
       
       illustration: {
-        prompt: `Educational cartoon illustration of ${topic}, simple friendly drawing style, clear visual metaphor, bright appealing colors, white background, child-friendly design for grade ${gradeLevel} students, clean vector art aesthetic, bold outlines, easy to understand visual`,
+        prompt: `Educational cartoon illustration of ${sanitizedTopic}, simple friendly drawing style, clear visual metaphor, bright appealing colors, white background, child-friendly design for grade ${gradeLevel} students, clean vector art aesthetic, bold outlines, easy to understand visual`,
         negative: "text, labels, words, captions, realistic photo style, complex details, messy, dark, scary"
       },
 
       diagram: {
-        prompt: `Scientific educational diagram of ${topic}, clean technical illustration style, color-coded components, clear visual structure, white background, organized layout suitable for grade ${gradeLevel}, simplified schematic style, easy to understand visual representation`,
+        prompt: `Scientific educational diagram of ${sanitizedTopic}, clean technical illustration style, color-coded components, clear visual structure, white background, organized layout suitable for grade ${gradeLevel}, simplified schematic style, easy to understand visual representation`,
         negative: "text labels, words, annotations, photorealistic, cluttered, complex details, messy"
       }
     };
 
     const selectedStyle = promptStyles[diagramStyle] || promptStyles.iconic;
 
-    console.log(`🎨 Generating diagram for: "${topic}" (Style: ${diagramStyle})`);
+    console.log(`🎨 Generating diagram for: "${sanitizedTopic}" (Style: ${diagramStyle})`);
 
     const body = {
       taskType: "TEXT_IMAGE",

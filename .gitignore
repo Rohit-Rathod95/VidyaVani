@@ -2,7 +2,22 @@
 VidyaVani-backend/.env*
 VidyaVani-backend/node_modules/
 
-# Root
+# Credentials & keys (Google Service Account keys)
+*.key.json
+*credentials*.json
+google-credentials.json
+credentials.json
+key.json
+service-account.json
+
+# Root secrets & dependencies
 .env
 .env.*
 node_modules/
+
+# IDEs & System files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log

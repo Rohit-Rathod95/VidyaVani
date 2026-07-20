@@ -5,10 +5,7 @@ const express = require("express");
 const router = express.Router();
 const NodeCache = require('node-cache');
 
-const {
-  polly,
-  SynthesizeSpeechCommand,
-} = require("../awsClients");
+const ttsClient = require("../googleTtsClient");
 
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -98,17 +95,31 @@ function validateInput(topic, grade, language) {
 // HELPER: Voice Configuration
 // -------------------------------------------------------
 function getVoiceConfig(language) {
-  const configs = {
-    "English": { voiceId: "Aditi", languageCode: "en-IN", engine: "standard" },
-    "Hindi": { voiceId: "Aditi", languageCode: "hi-IN", engine: "standard" },
+  const languageMap = {
+    "English": { languageCode: "en-IN", voiceId: "en-IN-Wavenet-A" },
+    "Hindi": { languageCode: "hi-IN", voiceId: "hi-IN-Wavenet-A" },
+    "Marathi": { languageCode: "mr-IN", voiceId: "mr-IN-Wavenet-A" },
+    "Tamil": { languageCode: "ta-IN", voiceId: "ta-IN-Wavenet-A" },
+    "Telugu": { languageCode: "te-IN", voiceId: "te-IN-Wavenet-A" },
+    "Bengali": { languageCode: "bn-IN", voiceId: "bn-IN-Wavenet-A" },
+    "Gujarati": { languageCode: "gu-IN", voiceId: "gu-IN-Wavenet-A" },
+    "Kannada": { languageCode: "kn-IN", voiceId: "kn-IN-Wavenet-A" },
+    "Malayalam": { languageCode: "ml-IN", voiceId: "ml-IN-Wavenet-A" }
   };
   
-  // All other languages fallback to Hindi
-  return configs[language] || { 
-    voiceId: "Aditi", 
-    languageCode: "hi-IN", 
-    engine: "standard",
-    isFallback: language !== "English" && language !== "Hindi"
+  const config = languageMap[language];
+  if (config) {
+    return {
+      voiceId: config.voiceId,
+      languageCode: config.languageCode,
+      isFallback: false
+    };
+  }
+
+  return {
+    voiceId: "en-IN-Wavenet-A",
+    languageCode: "en-IN",
+    isFallback: true
   };
 }
 
@@ -163,15 +174,6 @@ async function generateAudioForText(text, language, cacheKey = null) {
 
   const ssmlText = buildSSML(audioText);
 
-  const params = {
-    Text: ssmlText,
-    TextType: "ssml",
-    OutputFormat: "mp3",
-    VoiceId: voiceConfig.voiceId,
-    LanguageCode: voiceConfig.languageCode,
-    Engine: voiceConfig.engine,
-  };
-
   console.log("🔊 Generating audio:", {
     voice: voiceConfig.voiceId,
     language: voiceConfig.languageCode,
@@ -179,15 +181,14 @@ async function generateAudioForText(text, language, cacheKey = null) {
     cacheKey: cacheKey || 'none'
   });
 
-  const command = new SynthesizeSpeechCommand(params);
-  const response = await polly.send(command);
+  const request = {
+    input: { ssml: ssmlText },
+    voice: { languageCode: voiceConfig.languageCode, name: voiceConfig.voiceId },
+    audioConfig: { audioEncoding: 'MP3' },
+  };
 
-  const chunks = [];
-  for await (const chunk of response.AudioStream) {
-    chunks.push(chunk);
-  }
-  const audioBuffer = Buffer.concat(chunks);
-  const audioBase64 = audioBuffer.toString("base64");
+  const [response] = await ttsClient.synthesizeSpeech(request);
+  const audioBase64 = response.audioContent.toString("base64");
 
   const result = {
     audioBase64,

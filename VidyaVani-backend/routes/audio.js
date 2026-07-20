@@ -3,10 +3,7 @@ const express = require("express");
 const router = express.Router();
 const NodeCache = require('node-cache');
 
-const {
-  polly,
-  SynthesizeSpeechCommand,
-} = require("../awsClients");
+const ttsClient = require("../googleTtsClient");
 
 // -------------------------------------------------------
 // CACHE SETUP (24 hours TTL for audio)
@@ -25,7 +22,7 @@ let audioCacheHitCount = 0;
 // -------------------------------------------------------
 // CONSTANTS
 // -------------------------------------------------------
-const MAX_TEXT_LENGTH = 3000; // AWS Polly limit
+const MAX_TEXT_LENGTH = 3000; // Google TTS limit
 const MAX_SSML_LENGTH = 6000; // SSML can be longer due to tags
 
 // -------------------------------------------------------
@@ -118,32 +115,20 @@ router.post("/", async (req, res) => {
       });
     }
 
-    const params = {
-      Text: ssmlText,
-      TextType: "ssml",
-      OutputFormat: "mp3",
-      VoiceId: voiceConfig.voiceId,
-      LanguageCode: voiceConfig.languageCode,
-      Engine: voiceConfig.engine,
+    const request = {
+      input: { ssml: ssmlText },
+      voice: { languageCode: voiceConfig.languageCode, name: voiceConfig.voiceId },
+      audioConfig: { audioEncoding: 'MP3' },
     };
 
     console.log("🔊 Generating audio:", {
       voice: voiceConfig.voiceId,
       language: voiceConfig.languageCode,
-      engine: voiceConfig.engine,
       textLength: cleanText.length
     });
 
-    const command = new SynthesizeSpeechCommand(params);
-    const response = await polly.send(command);
-
-    // Convert stream to buffer
-    const chunks = [];
-    for await (const chunk of response.AudioStream) {
-      chunks.push(chunk);
-    }
-    const audioBuffer = Buffer.concat(chunks);
-    const audioBase64 = audioBuffer.toString("base64");
+    const [response] = await ttsClient.synthesizeSpeech(request);
+    const audioBase64 = response.audioContent.toString("base64");
 
     const duration = estimateDuration(cleanText);
 
@@ -168,7 +153,7 @@ router.post("/", async (req, res) => {
       cached: false,
       usingFallback: voiceConfig.usingFallback,
       fallbackMessage: voiceConfig.usingFallback 
-        ? `Audio generated in Hindi as ${voiceConfig.originalLanguage} is not yet supported by AWS Polly`
+        ? `Language '${voiceConfig.originalLanguage}' falls back to English.`
         : undefined,
       stats: {
         apiCalls: audioApiCallCount,
@@ -213,53 +198,46 @@ router.get("/voices", async (req, res) => {
   try {
     const { language } = req.query;
 
-    // Only include actually supported languages by AWS Polly
     const availableVoices = {
       "English": [
-        { id: "Aditi", name: "Aditi (Indian English)", gender: "Female", language: "en-IN", engine: "standard" },
-        { id: "Raveena", name: "Raveena (Indian English)", gender: "Female", language: "en-IN", engine: "standard" },
+        { id: "en-IN-Wavenet-A", name: "Google en-IN-Wavenet-A (Female)", gender: "Female", language: "en-IN" },
+        { id: "en-IN-Wavenet-B", name: "Google en-IN-Wavenet-B (Male)", gender: "Male", language: "en-IN" },
       ],
       "Hindi": [
-        { id: "Aditi", name: "Aditi (Hindi)", gender: "Female", language: "hi-IN", engine: "standard" },
+        { id: "hi-IN-Wavenet-A", name: "Google hi-IN-Wavenet-A (Female)", gender: "Female", language: "hi-IN" },
       ],
-      // Note: Other Indian languages not yet supported by AWS Polly
-      // Will fallback to Hindi for best experience
       "Marathi": [
-        { id: "Aditi", name: "Aditi (Hindi - Fallback)", gender: "Female", language: "hi-IN", engine: "standard", note: "Using Hindi voice (Marathi not yet supported)" },
+        { id: "mr-IN-Wavenet-A", name: "Google mr-IN-Wavenet-A (Female)", gender: "Female", language: "mr-IN" },
       ],
       "Tamil": [
-        { id: "Aditi", name: "Aditi (Hindi - Fallback)", gender: "Female", language: "hi-IN", engine: "standard", note: "Using Hindi voice (Tamil not yet supported)" },
+        { id: "ta-IN-Wavenet-A", name: "Google ta-IN-Wavenet-A (Female)", gender: "Female", language: "ta-IN" },
       ],
       "Telugu": [
-        { id: "Aditi", name: "Aditi (Hindi - Fallback)", gender: "Female", language: "hi-IN", engine: "standard", note: "Using Hindi voice (Telugu not yet supported)" },
+        { id: "te-IN-Wavenet-A", name: "Google te-IN-Wavenet-A (Female)", gender: "Female", language: "te-IN" },
       ],
       "Bengali": [
-        { id: "Aditi", name: "Aditi (Hindi - Fallback)", gender: "Female", language: "hi-IN", engine: "standard", note: "Using Hindi voice (Bengali not yet supported)" },
+        { id: "bn-IN-Wavenet-A", name: "Google bn-IN-Wavenet-A (Female)", gender: "Female", language: "bn-IN" },
       ],
       "Gujarati": [
-        { id: "Aditi", name: "Aditi (Hindi - Fallback)", gender: "Female", language: "hi-IN", engine: "standard", note: "Using Hindi voice (Gujarati not yet supported)" },
+        { id: "gu-IN-Wavenet-A", name: "Google gu-IN-Wavenet-A (Female)", gender: "Female", language: "gu-IN" },
       ],
       "Kannada": [
-        { id: "Aditi", name: "Aditi (Hindi - Fallback)", gender: "Female", language: "hi-IN", engine: "standard", note: "Using Hindi voice (Kannada not yet supported)" },
+        { id: "kn-IN-Wavenet-A", name: "Google kn-IN-Wavenet-A (Female)", gender: "Female", language: "kn-IN" },
       ],
       "Malayalam": [
-        { id: "Aditi", name: "Aditi (Hindi - Fallback)", gender: "Female", language: "hi-IN", engine: "standard", note: "Using Hindi voice (Malayalam not yet supported)" },
+        { id: "ml-IN-Wavenet-A", name: "Google ml-IN-Wavenet-A (Female)", gender: "Female", language: "ml-IN" },
       ],
     };
 
     if (language && availableVoices[language]) {
       res.json({ 
         voices: availableVoices[language],
-        language: language,
-        note: language !== "English" && language !== "Hindi" 
-          ? "AWS Polly doesn't yet support this language. Using Hindi as fallback for best experience."
-          : undefined
+        language: language
       });
     } else {
       res.json({ 
         voices: availableVoices,
-        supportedLanguages: Object.keys(availableVoices),
-        note: "Only English and Hindi have native support. Other languages use Hindi voice as fallback."
+        supportedLanguages: Object.keys(availableVoices)
       });
     }
 
@@ -358,33 +336,22 @@ router.post("/lesson", async (req, res) => {
 
     const ssmlText = buildSSML(fullText);
 
-    const params = {
-      Text: ssmlText,
-      TextType: "ssml",
-      OutputFormat: "mp3",
-      VoiceId: voiceConfig.voiceId,
-      LanguageCode: voiceConfig.languageCode,
-      Engine: voiceConfig.engine,
+    const request = {
+      input: { ssml: ssmlText },
+      voice: { languageCode: voiceConfig.languageCode, name: voiceConfig.voiceId },
+      audioConfig: { audioEncoding: 'MP3' },
     };
 
     console.log("🔊 Generating lesson audio:", {
       voice: voiceConfig.voiceId,
       language: voiceConfig.languageCode,
-      engine: voiceConfig.engine,
       textLength: plainTextLength
     });
 
-    const command = new SynthesizeSpeechCommand(params);
-    const response = await polly.send(command);
+    const [response] = await ttsClient.synthesizeSpeech(request);
+    const audioBase64 = response.audioContent.toString("base64");
 
-    const chunks = [];
-    for await (const chunk of response.AudioStream) {
-      chunks.push(chunk);
-    }
-    const audioBuffer = Buffer.concat(chunks);
-    const audioBase64 = audioBuffer.toString("base64");
-
-    const duration = estimateDuration(fullText); // Pass fullText, not plainTextLength
+    const duration = estimateDuration(fullText);
 
     // 🔥 STORE IN CACHE
     audioCache.set(lessonCacheKey, { audioBase64, duration });
@@ -407,7 +374,7 @@ router.post("/lesson", async (req, res) => {
       cached: false,
       usingFallback: voiceConfig.usingFallback,
       fallbackMessage: voiceConfig.usingFallback 
-        ? `Audio generated in Hindi as ${voiceConfig.originalLanguage} is not yet supported by AWS Polly`
+        ? `Language '${voiceConfig.originalLanguage}' falls back to English.`
         : undefined,
       stats: {
         apiCalls: audioApiCallCount,
@@ -480,45 +447,31 @@ router.delete("/cache", (req, res) => {
   });
 });
 
-// -------------------------------------------------------
-// HELPER: Get voice configuration
-// -------------------------------------------------------
 function getVoiceConfig(language, customVoiceId) {
-  const voiceCapabilities = {
-    "Aditi": "standard",
-    "Raveena": "standard",
-  };
-
-  // Only use AWS Polly supported languages
-  // For unsupported languages, fallback to Hindi or English
   const languageMap = {
-    "English": "en-IN",
-    "Hindi": "hi-IN",
-    // These are NOT supported by AWS Polly - fallback to Hindi
-    "Marathi": "hi-IN",     // Fallback to Hindi
-    "Tamil": "hi-IN",       // Fallback to Hindi
-    "Telugu": "hi-IN",      // Fallback to Hindi
-    "Bengali": "hi-IN",     // Fallback to Hindi
-    "Gujarati": "hi-IN",    // Fallback to Hindi
-    "Kannada": "hi-IN",     // Fallback to Hindi
-    "Malayalam": "hi-IN",   // Fallback to Hindi
+    "English": { languageCode: "en-IN", defaultVoice: "en-IN-Wavenet-A" },
+    "Hindi": { languageCode: "hi-IN", defaultVoice: "hi-IN-Wavenet-A" },
+    "Marathi": { languageCode: "mr-IN", defaultVoice: "mr-IN-Wavenet-A" },
+    "Tamil": { languageCode: "ta-IN", defaultVoice: "ta-IN-Wavenet-A" },
+    "Telugu": { languageCode: "te-IN", defaultVoice: "te-IN-Wavenet-A" },
+    "Bengali": { languageCode: "bn-IN", defaultVoice: "bn-IN-Wavenet-A" },
+    "Gujarati": { languageCode: "gu-IN", defaultVoice: "gu-IN-Wavenet-A" },
+    "Kannada": { languageCode: "kn-IN", defaultVoice: "kn-IN-Wavenet-A" },
+    "Malayalam": { languageCode: "ml-IN", defaultVoice: "ml-IN-Wavenet-A" }
   };
 
-  const voiceId = customVoiceId || "Aditi";
-  const engine = voiceCapabilities[voiceId] || "standard";
-  const languageCode = languageMap[language] || "en-IN";
-
-  // Log fallback warning
-  if (language !== "English" && language !== "Hindi" && languageCode === "hi-IN") {
-    console.log(`⚠️  Language '${language}' not supported by AWS Polly. Falling back to Hindi (hi-IN).`);
+  const config = languageMap[language] || languageMap["English"];
+  
+  let voiceId = config.defaultVoice;
+  if (customVoiceId && customVoiceId !== "Aditi" && customVoiceId !== "Raveena") {
+    voiceId = customVoiceId;
   }
 
   return {
     voiceId,
-    languageCode,
-    engine,
+    languageCode: config.languageCode,
     originalLanguage: language,
-    usingFallback: language !== "English" && language !== "Hindi"
+    usingFallback: !languageMap[language]
   };
 }
 

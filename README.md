@@ -75,19 +75,19 @@ The diagram below represents the complete end-to-end request lifecycle when a us
                                  │               │                                 │
                                  ◄───────────────┴─ (Parsed Lesson Object)          ◄───────────────┘
                                  │                                                 │
-                                 ├─► [AWS Polly] ◄── (Cache MISS)                  │
-                                 │   (SSML TTS Audio)                              │
-                                 ▼                                                 ▼
-                          [audioCache] (1h TTL)                             [diagramCache] (7d TTL)
-                                 │                                                 │
-                                 ◄─────────────────────────────────────────────────┘
-                                 │
-                                 ▼ (Lesson Text + Polly Audio Base64 + Diagram Base64)
+                                  ├─► [Google Cloud TTS] ◄── (Cache MISS)           │
+                                  │   (SSML TTS Audio)                              │
+                                  ▼                                                 ▼
+                           [audioCache] (7d TTL)                             [diagramCache] (7d TTL)
+                                  │                                                 │
+                                  ◄─────────────────────────────────────────────────┘
+                                  │
+                                  ▼ (Lesson Text + TTS Audio Base64 + Diagram Base64)
                           [React Frontend] ──► Render smartboard view + Autoplay Audio
 ```
 
 ### Async & Queueing Strategy
-*   **Concurrency**: Currently, backend operations are handled synchronously on a per-request basis. External API calls to Google Gemini, Pollinations.ai, and AWS Polly are made within each controller.
+*   **Concurrency**: Currently, backend operations are handled synchronously on a per-request basis. External API calls to Google Gemini, Pollinations.ai, and Google Cloud TTS are made within each controller.
 *   **Frontend Sequential Bottleneck**: The React client fetches `/api/lesson` first, updates state with the lesson text and base64 audio, and then triggers `/api/diagram`. This serial execution adds unnecessary latency before the visual diagram renders.
 
 ---
@@ -98,7 +98,7 @@ The diagram below represents the complete end-to-end request lifecycle when a us
 | :--- | :--- | :--- |
 | **Frontend** | React, Vite, HTML5 WebRTC (MediaRecorder API) | Dynamic rendering, browser audio capture, state management |
 | **Backend** | Node.js, Express | REST APIs, buffer management, error boundary handlers |
-| **AI / ML** | Google Gemini (gemini-1.5-flash), Pollinations.ai, AWS Polly, Deepgram (Nova-3) | Text generation, image generation, text-to-speech, speech-to-text |
+| **AI / ML** | Google Gemini (gemini-3.1-flash-lite), Pollinations.ai, Google Cloud TTS, Deepgram (Nova-3) | Text generation, image generation, text-to-speech, speech-to-text |
 | **Infrastructure** | Node-Cache (In-Memory) | Multi-tier TTL caching layer for cost and latency reduction |
 
 ---
@@ -108,19 +108,14 @@ The diagram below represents the complete end-to-end request lifecycle when a us
 ### 📋 Prerequisites
 *   Node.js (v18.x or above)
 *   npm (v9.x or above)
-*   AWS Account with access enabled for **AWS Polly** (Aditi voice), Google Gemini API Key, and Deepgram API Key.
+*   Google Cloud Project with **Text-to-Speech API** enabled, Google Gemini API Key, and Deepgram API Key.
 *   Deepgram Account with a valid API key.
 
 ### 🔑 Environment Variables Configuration
 Create a `.env` file in the root of `VidyaVani-backend/`:
 
 ```env
-PORT=5000
-
-# AWS Credentials
-AWS_REGION=us-east-1
-AWS_ACCESS_KEY_ID=your_aws_access_key_id
-AWS_SECRET_ACCESS_KEY=your_aws_secret_access_key
+PORT=5001
 
 # Google Gemini API
 GEMINI_API_KEY=your_gemini_api_key_here
@@ -128,8 +123,9 @@ GEMINI_API_KEY=your_gemini_api_key_here
 # Deepgram STT
 DEEPGRAM_API_KEY=your_deepgram_api_key
 
-# Polly Configuration
-POLLY_VOICE_ID=Aditi
+# Google Cloud Text-to-Speech API
+GOOGLE_APPLICATION_CREDENTIALS=your_google_credentials_json_path_here
+GOOGLE_TTS_API_KEY=your_google_tts_api_key_here
 ```
 
 ### ⚙️ Installation & Running Locally
@@ -206,7 +202,7 @@ Open `http://localhost:5173` in your browser.
       },
       "audio": {
         "audioBase64": "//uQxAAAAAAAAAAAAAAAAAAAAAA...",
-        "voiceUsed": "Aditi",
+        "voiceUsed": "en-IN-Wavenet-A",
         "languageCode": "en-IN",
         "isFallback": false,
         "cached": false
@@ -265,7 +261,7 @@ Open `http://localhost:5173` in your browser.
       "answer": "Leaves look green because they contain a pigment called chlorophyll. This pigment absorbing sunlight...",
       "audio": {
         "audioBase64": "//uQxAAAAAAAAAAAAAAAAAAAAAA...",
-        "voiceUsed": "Aditi",
+        "voiceUsed": "en-IN-Wavenet-A",
         "languageCode": "en-IN",
         "cached": false
       },
@@ -305,9 +301,8 @@ The platform integrates standard `node-cache` instances inside each routing cont
 
 ## ⚠️ Known Limitations & Security Gaps
 
-*   **API Credentials Exposure**: Access keys (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `DEEPGRAM_API_KEY`) are stored in raw format within `.env`. This poses a major vulnerability if files are accidentally checked into version control.
-*   **Regional TTS Accents**: AWS Polly only natively supports English (`en-IN`) and Hindi (`hi-IN`). Other regional languages (e.g. Marathi, Tamil, Telugu) are routed to fallback on the Hindi voice model (`Aditi` with `hi-IN` code). This results in a heavy Hindi accent or inaccurate phonetics when trying to speak south Indian or regional dialects.
-*   **Missing Rate Limiting**: The backend has no IP rate limits. A single user can repeatedly call image generation and speech synthesis, quickly depleting the monthly AWS quota and driving up costs.
+*   **API Credentials Exposure**: Access keys (`DEEPGRAM_API_KEY`, `GOOGLE_TTS_API_KEY`) are stored in raw format within `.env`. This poses a major vulnerability if files are accidentally checked into version control.
+*   **Missing Rate Limiting**: The backend has no IP rate limits. A single user can repeatedly call image generation and speech synthesis, quickly depleting monthly quotas and driving up costs.
 *   **Sequential Frontend Promises**: Diagram requests do not launch until the lesson generator responds, delaying the screen visual update.
 *   **No Input Sanitization**: User topics and doubts are interpolated directly into prompts, exposing the system to prompt injection.
 *   **Unused AWS Transcribe Code**: `awsClients.js` imports and instantiates the `TranscribeStreamingClient`, but this client is completely unused in the active route handlers (which rely on Deepgram).
@@ -320,7 +315,7 @@ The platform integrates standard `node-cache` instances inside each routing cont
 - [ ] **Distributed Cache**: Migrate `node-cache` to a shared Redis store to maintain cache states across container restarts or horizontal scaling.
 - [ ] **TTL Harmonization**: Sync lesson text and lesson audio cache expirations to avoid re-generating audio for cached lessons.
 - [ ] **Rate Limiting & Shielding**: Add `express-rate-limit` to restrict API requests per IP. Add input validation rules and prompt filtering to block injection attempts.
-- [ ] **Regional TTS Integration**: Replace AWS Polly for regional languages with specialized TTS models (e.g., Azure Speech SDK or Bhashini APIs) to read Kannada, Telugu, Tamil, and Bengali accurately.
+- [x] **Regional TTS Integration**: Migrate off AWS Polly to Google Cloud Text-to-Speech to natively read regional languages with correct accents.
 
 ---
 

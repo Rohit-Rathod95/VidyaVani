@@ -10,8 +10,8 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@aws-sdk/client-polly": "^3.946.0",
     "@deepgram/sdk": "^4.11.2",
+    "@google-cloud/text-to-speech": "^6.4.1",
     "@google/generative-ai": "^0.24.1",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",

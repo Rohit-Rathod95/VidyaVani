@@ -15,6 +15,10 @@ function App() {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [lessonLoading, setLessonLoading] = useState(false);
+  const [diagramLoading, setDiagramLoading] = useState(false);
+  const [lessonError, setLessonError] = useState("");
+  const [diagramError, setDiagramError] = useState("");
   
   const [doubtText, setDoubtText] = useState("");
   const [doubtAnswer, setDoubtAnswer] = useState(null);
@@ -165,6 +169,8 @@ function App() {
     }
 
     setError("");
+    setLessonError("");
+    setDiagramError("");
     setAudioError("");
     setLesson(null);
     setImageBase64(null);
@@ -172,78 +178,95 @@ function App() {
     setDoubtText("");
     setLessonAudioSrc(null);
     setDoubtAudioSrc(null);
-    setLoading(true);
     setShowDoubtSection(false);
 
     stopAllAudio();
 
-    try {
-      console.log("📚 Generating lesson with auto-audio...");
-      
-      const lessonRes = await fetch(`${API_BASE}/api/lesson`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          topic: topic.trim(),
-          grade,
-          language,
-        })
-      });
-      
-      const { lesson: lessonData, audio: autoAudio, cached } = await lessonRes.json();
-      
-      console.log("Response data:", { 
-        hasLesson: !!lessonData, 
-        hasAudio: !!autoAudio,
-        audioBase64Length: autoAudio?.audioBase64?.length 
-      });
-      
-      setLesson(lessonData);
-      console.log(`✅ Lesson ${cached ? '(cached)' : 'generated'}`);
+    const lessonPromise = (async () => {
+      setLessonLoading(true);
+      try {
+        console.log("📚 Generating lesson with auto-audio...");
+        const lessonRes = await fetch(`${API_BASE}/api/lesson`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            topic: topic.trim(),
+            grade,
+            language,
+          })
+        });
 
-      if (autoAudio?.audioBase64) {
-        console.log("🎵 Setting lesson audio source...");
-        const audioSrc = `data:audio/mp3;base64,${autoAudio.audioBase64}`;
-        setLessonAudioSrc(audioSrc);
-        // Audio will auto-play via useEffect
-      } else {
-        console.warn("⚠️ No audio available in response");
-        setAudioError("Audio not available for this lesson");
-      }
-
-      console.log("🎨 Generating diagram...");
-      const diagramRes = await fetch(`${API_BASE}/api/diagram`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          topic: topic.trim(),
-          grade,
-          language,
-          style: diagramStyle
-        })
-      });
+        const lessonData = await lessonRes.json();
         
-      const diagramData = await diagramRes.json();
-      if (diagramData.imageBase64) {
-        setImageBase64(diagramData.imageBase64);
-        console.log("✅ Diagram generated");
-      }
+        if (!lessonRes.ok) {
+          throw new Error(lessonData.error || lessonData.errors?.join(', ') || "Failed to generate lesson");
+        }
 
+        const { lesson: generatedLesson, audio: autoAudio, cached } = lessonData;
+        
+        console.log("Response data:", { 
+          hasLesson: !!generatedLesson, 
+          hasAudio: !!autoAudio,
+          audioBase64Length: autoAudio?.audioBase64?.length 
+        });
+        
+        setLesson(generatedLesson);
+        console.log(`✅ Lesson ${cached ? '(cached)' : 'generated'}`);
+
+        if (autoAudio?.audioBase64) {
+          console.log("🎵 Setting lesson audio source...");
+          const audioSrc = `data:audio/mp3;base64,${autoAudio.audioBase64}`;
+          setLessonAudioSrc(audioSrc);
+        } else {
+          console.warn("⚠️ No audio available in response");
+          setAudioError("Audio not available for this lesson");
+        }
+      } catch (err) {
+        console.error("Lesson generation error:", err);
+        setLessonError(err.message || "Something went wrong.");
+      } finally {
+        setLessonLoading(false);
+      }
+    })();
+
+    const diagramPromise = (async () => {
+      setDiagramLoading(true);
+      try {
+        console.log("🎨 Generating diagram...");
+        const diagramRes = await fetch(`${API_BASE}/api/diagram`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            topic: topic.trim(),
+            grade,
+            language,
+            style: diagramStyle
+          })
+        });
+          
+        const diagramData = await diagramRes.json();
+        if (!diagramRes.ok) {
+          throw new Error(diagramData.error || "Failed to generate diagram");
+        }
+
+        if (diagramData.imageBase64) {
+          setImageBase64(diagramData.imageBase64);
+          console.log("✅ Diagram generated");
+        }
+      } catch (err) {
+        console.error("Diagram generation error:", err);
+        setDiagramError(err.message || "Something went wrong.");
+      } finally {
+        setDiagramLoading(false);
+      }
+    })();
+
+    try {
+      await Promise.all([lessonPromise, diagramPromise]);
       setShowDoubtSection(true);
       fetchStats();
-
     } catch (err) {
-      console.error("Generation error:", err);
-      const errorMsg = err.message || "Something went wrong.";
-      setError(errorMsg);
-      
-      if (err.response?.status === 429) {
-        setError("⚠️ Rate limit reached. Please wait a moment.");
-      } else if (err.response?.status === 503) {
-        setError("⚠️ Service unavailable. Check AWS configuration.");
-      }
-    } finally {
-      setLoading(false);
+      console.error("Parallel execution completed with errors:", err);
     }
   };
 
@@ -583,10 +606,10 @@ function App() {
             {/* Generate Button */}
             <button 
               onClick={handleGenerate} 
-              disabled={loading || !topic.trim()}
+              disabled={lessonLoading || diagramLoading || !topic.trim()}
               className="generate-btn"
             >
-              {loading ? "⏳ Generating Your AI Lesson..." : "✨ Generate Lesson with Audio"}
+              {(lessonLoading || diagramLoading) ? "⏳ Generating Your AI Lesson..." : "✨ Generate Lesson with Audio"}
             </button>
 
             {/* Error Messages */}
@@ -594,8 +617,25 @@ function App() {
             {audioError && <div className="error-message">🔊 {audioError}</div>}
           </section>
 
+          {/* Lesson Loading Spinner */}
+          {lessonLoading && (
+            <section className="card lesson-loading-card" style={{ textAlign: 'center', padding: '80px 20px' }}>
+              <div className="loading-spinner"></div>
+              <p style={{ color: 'var(--text-secondary)' }}>Generating lesson content & audio narration...</p>
+            </section>
+          )}
+
+          {/* Lesson Error Message */}
+          {lessonError && !lessonLoading && (
+            <section className="card error-card" style={{ border: '1px solid #feb2b2', backgroundColor: '#fff5f5', color: '#c53030', padding: '30px', borderRadius: '8px', textAlign: 'center' }}>
+              <div className="placeholder-icon" style={{ fontSize: '3rem', marginBottom: '10px', opacity: 0.5 }}>⚠️</div>
+              <h3 style={{ marginBottom: '10px' }}>Lesson Generation Failed</h3>
+              <p>{lessonError}</p>
+            </section>
+          )}
+
           {/* Lesson Card */}
-          {lesson && (
+          {lesson && !lessonLoading && (
             <section className="card lesson-card">
               <div className="card-header">
                 <h2 className="card-title-large">📚 {lesson.title}</h2>
@@ -750,7 +790,7 @@ function App() {
           )}
 
           {/* Placeholder when no lesson */}
-          {!lesson && !loading && (
+          {!lesson && !lessonLoading && !lessonError && (
             <section className="card placeholder-card">
               <div className="placeholder-content">
                 <h3>👆 Enter a topic or use voice input above</h3>
@@ -771,7 +811,7 @@ function App() {
           <section className="card diagram-card">
             <h2 className="card-title">🎨 Educational Diagram</h2>
             
-            {!imageBase64 && !loading && (
+            {!imageBase64 && !diagramLoading && !diagramError && (
               <div className="diagram-placeholder">
                 <div className="placeholder-icon">🖼️</div>
                 <p>Visual diagram will appear here...</p>
@@ -779,14 +819,22 @@ function App() {
               </div>
             )}
 
-            {loading && (
+            {diagramLoading && (
               <div className="diagram-loading">
                 <div className="loading-spinner"></div>
                 <p>Generating diagram...</p>
               </div>
             )}
 
-            {imageBase64 && (
+            {diagramError && !diagramLoading && (
+              <div className="diagram-loading" style={{ color: '#c53030' }}>
+                <div className="placeholder-icon" style={{ opacity: 0.5 }}>⚠️</div>
+                <p>Failed to generate diagram</p>
+                <p style={{ fontSize: '0.85rem', color: '#e53e3e', marginTop: '5px' }}>{diagramError}</p>
+              </div>
+            )}
+
+            {imageBase64 && !diagramLoading && (
               <div className="diagram-content">
                 <img
                   src={`data:image/png;base64,${imageBase64}`}

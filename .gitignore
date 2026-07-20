@@ -1,3 +1,8 @@
+# Backend
+VidyaVani-backend/.env*
+VidyaVani-backend/node_modules/
+
+# Root
 .env
-VidyaVani-backend/.env*.env
-.env
+.env.*
+node_modules/

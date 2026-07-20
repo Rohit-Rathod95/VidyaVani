@@ -6,14 +6,12 @@ const router = express.Router();
 const NodeCache = require('node-cache');
 
 const {
-  bedrock,
   polly,
-  InvokeModelCommand,
   SynthesizeSpeechCommand,
 } = require("../awsClients");
 
-const MODEL_ID = process.env.BEDROCK_TEXT_MODEL_ID;
-const IS_CLAUDE = MODEL_ID.includes('claude') || MODEL_ID.includes('anthropic');
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // -------------------------------------------------------
 // SHARED CACHE (7 days for lessons, 1 hour for audio)
@@ -386,10 +384,11 @@ Summarize the 3 most important points. Start with "To summarize,"
 
 Keep language simple for grade ${grade} students.`;
 
-  if (IS_CLAUDE) {
-    return await callClaudeBedrock(prompt);
-  } else {
-    return await callTitanBedrock(prompt);
+  try {
+    return await callGemini(prompt);
+  } catch (error) {
+    console.error("❌ Lesson generation failed:", error.message);
+    throw error;
   }
 }
 
@@ -416,11 +415,7 @@ Application question.
 Format clearly in ${language}.`;
 
   try {
-    if (IS_CLAUDE) {
-      return await callClaudeBedrock(quizPrompt);
-    } else {
-      return await callTitanBedrock(quizPrompt);
-    }
+    return await callGemini(quizPrompt);
   } catch (error) {
     console.error("⚠️ Quiz generation failed:", error.message);
     return generateFallbackQuiz(topic, grade, language);
@@ -428,50 +423,17 @@ Format clearly in ${language}.`;
 }
 
 // -------------------------------------------------------
-// BEDROCK API HELPERS
+// GEMINI API HELPER
 // -------------------------------------------------------
-async function callClaudeBedrock(prompt) {
-  const payload = {
-    anthropic_version: "bedrock-2023-05-31",
-    max_tokens: 2048,
-    temperature: 0.7,
-    messages: [{ role: "user", content: prompt }]
-  };
-
-  const command = new InvokeModelCommand({
-    modelId: MODEL_ID,
-    contentType: "application/json",
-    accept: "application/json",
-    body: JSON.stringify(payload),
-  });
-
-  const response = await bedrock.send(command);
-  const raw = new TextDecoder().decode(response.body);
-  const bodyJson = JSON.parse(raw);
-  return bodyJson.content?.[0]?.text?.trim() || "";
-}
-
-async function callTitanBedrock(prompt) {
-  const payload = {
-    inputText: prompt,
-    textGenerationConfig: {
-      maxTokenCount: 2048,
-      temperature: 0.7,
-      topP: 0.9
-    }
-  };
-
-  const command = new InvokeModelCommand({
-    modelId: MODEL_ID,
-    contentType: "application/json",
-    accept: "application/json",
-    body: JSON.stringify(payload),
-  });
-
-  const response = await bedrock.send(command);
-  const raw = new TextDecoder().decode(response.body);
-  const bodyJson = JSON.parse(raw);
-  return bodyJson.results?.[0]?.outputText?.trim() || "";
+async function callGemini(prompt) {
+  try {
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const result = await model.generateContent(prompt);
+    return result.response.text().trim() || "";
+  } catch (err) {
+    console.error("❌ Gemini generation error:", err.message);
+    throw err;
+  }
 }
 
 // -------------------------------------------------------
@@ -538,7 +500,7 @@ router.get("/stats", (req, res) => {
       cacheHits: audioCacheHits,
       cacheHitRate: `${audioHitRate}%`
     },
-    modelUsed: MODEL_ID
+    modelUsed: "gemini-1.5-flash"
   });
 });
 

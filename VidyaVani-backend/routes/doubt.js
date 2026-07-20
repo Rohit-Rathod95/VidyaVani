@@ -3,14 +3,12 @@ const routerDoubt = express.Router();
 const NodeCache = require('node-cache');
 
 const {
-  bedrock,
   polly,
-  InvokeModelCommand,
   SynthesizeSpeechCommand,
 } = require("../awsClients");
 
-const MODEL_ID = process.env.BEDROCK_TEXT_MODEL_ID;
-const IS_CLAUDE = MODEL_ID.includes('claude') || MODEL_ID.includes('anthropic');
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // Shared caches
 const doubtCache = new NodeCache({ 
@@ -165,12 +163,7 @@ Provide a clear, simple answer in ${lang} suitable for grade ${gradeLevel} stude
 - Be encouraging and supportive
 - Don't mention that you're an AI or assistant`;
 
-    let answer;
-    if (IS_CLAUDE) {
-      answer = await callClaudeBedrock(prompt);
-    } else {
-      answer = await callTitanBedrock(prompt);
-    }
+    const answer = await callGemini(prompt);
 
     const cleanAnswer = answer.trim();
 
@@ -309,50 +302,16 @@ function buildSSML(text) {
   return `<speak><prosody rate="medium" pitch="medium">${cleanText}</prosody></speak>`;
 }
 
-// Helper: Call Claude
-async function callClaudeBedrock(prompt) {
-  const payload = {
-    anthropic_version: "bedrock-2023-05-31",
-    max_tokens: 1024,
-    temperature: 0.7,
-    messages: [{ role: "user", content: prompt }]
-  };
-
-  const command = new InvokeModelCommand({
-    modelId: MODEL_ID,
-    contentType: "application/json",
-    accept: "application/json",
-    body: JSON.stringify(payload),
-  });
-
-  const response = await bedrock.send(command);
-  const raw = new TextDecoder().decode(response.body);
-  const bodyJson = JSON.parse(raw);
-  return bodyJson.content?.[0]?.text?.trim() || "";
-}
-
-// Helper: Call Titan
-async function callTitanBedrock(prompt) {
-  const payload = {
-    inputText: prompt,
-    textGenerationConfig: {
-      maxTokenCount: 1024,
-      temperature: 0.7,
-      topP: 0.9
-    }
-  };
-
-  const command = new InvokeModelCommand({
-    modelId: MODEL_ID,
-    contentType: "application/json",
-    accept: "application/json",
-    body: JSON.stringify(payload),
-  });
-
-  const response = await bedrock.send(command);
-  const raw = new TextDecoder().decode(response.body);
-  const bodyJson = JSON.parse(raw);
-  return bodyJson.results?.[0]?.outputText?.trim() || "";
+// Helper: Call Gemini
+async function callGemini(prompt) {
+  try {
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const result = await model.generateContent(prompt);
+    return result.response.text().trim() || "";
+  } catch (err) {
+    console.error("❌ Gemini generation error:", err.message);
+    throw err;
+  }
 }
 
 // -------------------------------------------------------

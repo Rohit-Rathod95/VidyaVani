@@ -3,12 +3,6 @@ const express = require("express");
 const router = express.Router();
 const NodeCache = require('node-cache');
 
-const {
-  bedrock,
-  InvokeModelCommand,
-} = require("../awsClients");
-
-const MODEL_ID = process.env.BEDROCK_IMAGE_MODEL_ID;
 
 // -------------------------------------------------------
 // CACHE SETUP (7 days TTL)
@@ -249,44 +243,24 @@ router.post("/", async (req, res) => {
 
     console.log(`🎨 Generating diagram for: "${sanitizedTopic}" (Style: ${diagramStyle})`);
 
-    const body = {
-      taskType: "TEXT_IMAGE",
-      textToImageParams: {
-        text: selectedStyle.prompt,
-        negativeText: selectedStyle.negative
-      },
-      imageGenerationConfig: {
-        numberOfImages: 1,
-        height: 1024,
-        width: 1024,
-        cfgScale: 8.0,
-        seed: Math.floor(Math.random() * 2147483647),
-        quality: "standard",
-      },
-    };
-
-    const command = new InvokeModelCommand({
-      modelId: MODEL_ID,
-      contentType: "application/json",
-      accept: "application/json",
-      body: JSON.stringify(body),
-    });
-
-    const response = await bedrock.send(command);
-    const raw = new TextDecoder().decode(response.body);
-    const data = JSON.parse(raw);
-
     let imageBase64;
-    
-    if (data.images && data.images[0]) {
-      imageBase64 = data.images[0];
-    } else if (data.artifacts && data.artifacts[0]) {
-      imageBase64 = data.artifacts[0].base64;
-    } else {
-      console.error("❌ Unexpected response format:", Object.keys(data));
+    try {
+      const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(selectedStyle.prompt)}?width=1024&height=1024&nologo=true`;
+      console.log(`🌐 Requesting Pollinations.ai image: ${url}`);
+
+      const imageRes = await fetch(url);
+      if (!imageRes.ok) {
+        throw new Error(`Failed to fetch image from Pollinations.ai: ${imageRes.statusText}`);
+      }
+
+      const arrayBuffer = await imageRes.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+      imageBase64 = buffer.toString('base64');
+    } catch (fetchErr) {
+      console.error("❌ Pollinations.ai API call failed:", fetchErr);
       return res.status(500).json({ 
-        error: "No image generated",
-        responseKeys: Object.keys(data)
+        error: "Failed to generate diagram from Pollinations.ai",
+        details: fetchErr.message
       });
     }
 

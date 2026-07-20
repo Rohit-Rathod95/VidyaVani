@@ -19,25 +19,25 @@ function App() {
   const [diagramLoading, setDiagramLoading] = useState(false);
   const [lessonError, setLessonError] = useState("");
   const [diagramError, setDiagramError] = useState("");
-  
+
   const [doubtText, setDoubtText] = useState("");
   const [doubtAnswer, setDoubtAnswer] = useState(null);
   const [doubtLoading, setDoubtLoading] = useState(false);
   const [showDoubtSection, setShowDoubtSection] = useState(false);
-  
+
   const [lessonAudioSrc, setLessonAudioSrc] = useState(null);
   const [doubtAudioSrc, setDoubtAudioSrc] = useState(null);
   const [isPlayingLessonAudio, setIsPlayingLessonAudio] = useState(false);
   const [isPlayingDoubtAudio, setIsPlayingDoubtAudio] = useState(false);
   const [audioError, setAudioError] = useState("");
-  
+
   const [showStats, setShowStats] = useState(false);
   const [stats, setStats] = useState(null);
-  
+
   const lessonAudioRef = useRef(null);
   const doubtAudioRef = useRef(null);
 
-  const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:5000";
+  const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:5001";
 
   useEffect(() => {
     fetchStyles();
@@ -48,15 +48,15 @@ function App() {
   useEffect(() => {
     if (lessonAudioSrc && lessonAudioRef.current) {
       console.log("🎵 Lesson audio source updated, preparing to play...");
-      
+
       const audio = lessonAudioRef.current;
       let hasPlayed = false;
-      
+
       const handleCanPlay = () => {
         if (!hasPlayed) {
           hasPlayed = true;
           console.log("✅ Audio can play, attempting autoplay...");
-          
+
           // Small delay to ensure everything is ready
           setTimeout(() => {
             if (audio.paused) {
@@ -73,10 +73,10 @@ function App() {
       // Remove old listeners first
       audio.removeEventListener('canplay', handleCanPlay);
       audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
-      
+
       audio.addEventListener('canplay', handleCanPlay, { once: true });
       audio.addEventListener('loadedmetadata', handleLoadedMetadata);
-      
+
       // Force load
       audio.load();
 
@@ -91,15 +91,15 @@ function App() {
   useEffect(() => {
     if (doubtAudioSrc && doubtAudioRef.current) {
       console.log("🎵 Doubt audio source updated, preparing to play...");
-      
+
       const audio = doubtAudioRef.current;
       let hasPlayed = false;
-      
+
       const handleCanPlay = () => {
         if (!hasPlayed) {
           hasPlayed = true;
           console.log("✅ Doubt audio can play, attempting autoplay...");
-          
+
           setTimeout(() => {
             if (audio.paused) {
               playDoubtAudio();
@@ -143,7 +143,7 @@ function App() {
         fetch(`${API_BASE}/api/audio/stats`).then(r => r.json()),
         fetch(`${API_BASE}/api/doubt/stats`).then(r => r.json())
       ]);
-      
+
       setStats({
         lessons: lessonStats,
         audio: audioStats,
@@ -197,19 +197,19 @@ function App() {
         });
 
         const lessonData = await lessonRes.json();
-        
+
         if (!lessonRes.ok) {
           throw new Error(lessonData.error || lessonData.errors?.join(', ') || "Failed to generate lesson");
         }
 
         const { lesson: generatedLesson, audio: autoAudio, cached } = lessonData;
-        
-        console.log("Response data:", { 
-          hasLesson: !!generatedLesson, 
+
+        console.log("Response data:", {
+          hasLesson: !!generatedLesson,
           hasAudio: !!autoAudio,
-          audioBase64Length: autoAudio?.audioBase64?.length 
+          audioBase64Length: autoAudio?.audioBase64?.length
         });
-        
+
         setLesson(generatedLesson);
         console.log(`✅ Lesson ${cached ? '(cached)' : 'generated'}`);
 
@@ -243,7 +243,7 @@ function App() {
             style: diagramStyle
           })
         });
-          
+
         const diagramData = await diagramRes.json();
         if (!diagramRes.ok) {
           throw new Error(diagramData.error || "Failed to generate diagram");
@@ -280,7 +280,7 @@ function App() {
 
   const handleSubmitDoubt = async (voiceDoubt = null) => {
     const question = voiceDoubt || doubtText;
-    
+
     if (!question.trim()) {
       setError("Please enter a question");
       return;
@@ -300,7 +300,7 @@ function App() {
 
     try {
       console.log("❓ Submitting doubt...");
-      
+
       const doubtRes = await fetch(`${API_BASE}/api/doubt`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -313,13 +313,13 @@ function App() {
       });
 
       const { answer, audio: doubtAudio, cached } = await doubtRes.json();
-      
+
       console.log("Doubt response:", {
         hasAnswer: !!answer,
         hasAudio: !!doubtAudio,
         audioBase64Length: doubtAudio?.audioBase64?.length
       });
-      
+
       setDoubtAnswer(answer);
       console.log(`✅ Doubt ${cached ? '(cached)' : 'answered'}`);
 
@@ -354,13 +354,13 @@ function App() {
       console.log("▶️ Attempting to play lesson audio...");
       console.log("Audio ready state:", audio.readyState);
       console.log("Audio paused:", audio.paused);
-      
+
       // Only reset if not already playing
       if (audio.paused) {
         audio.currentTime = 0;
-        
+
         const playPromise = audio.play();
-        
+
         if (playPromise !== undefined) {
           playPromise
             .then(() => {
@@ -370,7 +370,7 @@ function App() {
             })
             .catch(err => {
               console.error("❌ Audio play error:", err);
-              
+
               if (err.name === 'NotAllowedError') {
                 setAudioError("🔊 Browser blocked autoplay. Please click the Play button to start audio.");
               } else if (err.name === 'NotSupportedError') {
@@ -390,12 +390,12 @@ function App() {
     if (doubtAudioRef.current && !isPlayingDoubtAudio) {
       const audio = doubtAudioRef.current;
       console.log("▶️ Attempting to play doubt audio...");
-      
+
       if (audio.paused) {
         audio.currentTime = 0;
-        
+
         const playPromise = audio.play();
-        
+
         if (playPromise !== undefined) {
           playPromise
             .then(() => {
@@ -405,7 +405,7 @@ function App() {
             })
             .catch(err => {
               console.error("❌ Doubt audio play error:", err);
-              
+
               if (err.name === 'NotAllowedError') {
                 setAudioError("🔊 Browser blocked autoplay. Please click the Play button.");
               } else if (err.name === 'AbortError') {
@@ -466,7 +466,7 @@ function App() {
           <p className="brand-tagline">
             Transforming idle smartboards into autonomous learning assistants
           </p>
-          <button 
+          <button
             onClick={() => setShowStats(!showStats)}
             className="stats-toggle-btn"
           >
@@ -490,7 +490,7 @@ function App() {
                 {stats.lessons.cacheHitRate || '0%'} Cost Saved
               </div>
             </div>
-            
+
             <div className="stat-card">
               <h4>Audio Generated</h4>
               <div className="stat-number">{stats.audio.totalRequests || 0}</div>
@@ -501,7 +501,7 @@ function App() {
                 {stats.audio.cacheHitRate || '0%'} Cost Saved
               </div>
             </div>
-            
+
             <div className="stat-card">
               <h4>Doubts Answered</h4>
               <div className="stat-number">{stats.doubts.doubts?.totalQuestions || 0}</div>
@@ -539,7 +539,7 @@ function App() {
                 maxLength={200}
               />
               <div className="voice-input-wrapper">
-                <VoiceInput 
+                <VoiceInput
                   onTranscription={handleTopicVoiceTranscription}
                   language={language}
                   apiBase={API_BASE}
@@ -567,8 +567,8 @@ function App() {
 
               <div className="form-group">
                 <label className="form-label">Language</label>
-                <select 
-                  value={language} 
+                <select
+                  value={language}
                   onChange={(e) => setLanguage(e.target.value)}
                   className="form-select"
                 >
@@ -589,8 +589,8 @@ function App() {
             {availableStyles.length > 0 && (
               <div className="form-group">
                 <label className="form-label">Diagram Style</label>
-                <select 
-                  value={diagramStyle} 
+                <select
+                  value={diagramStyle}
                   onChange={(e) => setDiagramStyle(e.target.value)}
                   className="form-select"
                 >
@@ -604,8 +604,8 @@ function App() {
             )}
 
             {/* Generate Button */}
-            <button 
-              onClick={handleGenerate} 
+            <button
+              onClick={handleGenerate}
               disabled={lessonLoading || diagramLoading || !topic.trim()}
               className="generate-btn"
             >
@@ -721,7 +721,7 @@ function App() {
                   <p className="doubt-subtitle">
                     Type or speak your question - AI will answer instantly with audio
                   </p>
-                  
+
                   <textarea
                     value={doubtText}
                     onChange={(e) => setDoubtText(e.target.value)}
@@ -731,16 +731,16 @@ function App() {
                     maxLength={500}
                     disabled={doubtLoading}
                   />
-                  
+
                   <div className="doubt-actions">
-                    <VoiceInput 
+                    <VoiceInput
                       onTranscription={handleDoubtVoiceTranscription}
                       language={language}
                       apiBase={API_BASE}
                       buttonText="🎤 Ask via Voice"
                       disabled={doubtLoading}
                     />
-                    
+
                     <button
                       onClick={() => handleSubmitDoubt()}
                       disabled={!doubtText.trim() || doubtLoading}
@@ -765,7 +765,7 @@ function App() {
                         )}
                       </div>
                       <p className="answer-content">{doubtAnswer}</p>
-                      
+
                       {doubtAudioSrc && (
                         <div className="audio-player-container">
                           <p className="audio-label">🎧 Answer Audio</p>
@@ -810,7 +810,7 @@ function App() {
         <div className="right-panel">
           <section className="card diagram-card">
             <h2 className="card-title">🎨 Educational Diagram</h2>
-            
+
             {!imageBase64 && !diagramLoading && !diagramError && (
               <div className="diagram-placeholder">
                 <div className="placeholder-icon">🖼️</div>
@@ -842,7 +842,7 @@ function App() {
                   className="diagram-image"
                 />
                 <p className="diagram-caption">
-                  Style: {diagramStyle.charAt(0).toUpperCase() + diagramStyle.slice(1)} | 
+                  Style: {diagramStyle.charAt(0).toUpperCase() + diagramStyle.slice(1)} |
                   AI-Generated Visual Aid
                 </p>
               </div>

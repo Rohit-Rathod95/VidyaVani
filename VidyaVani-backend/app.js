@@ -35,7 +35,7 @@ app.use("/api/transcribe", transcribeRoutes);
 app.use("/api/doubt", apiLimiter, doubtRoutes);
 
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5001;
 app.listen(PORT, () => {
   console.log(`VidyaVani backend running on port ${PORT}`);
 });

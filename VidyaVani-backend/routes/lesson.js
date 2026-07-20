@@ -427,7 +427,7 @@ Format clearly in ${language}.`;
 // -------------------------------------------------------
 async function callGemini(prompt) {
   try {
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const model = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite" });
     const result = await model.generateContent(prompt);
     return result.response.text().trim() || "";
   } catch (err) {
@@ -500,7 +500,7 @@ router.get("/stats", (req, res) => {
       cacheHits: audioCacheHits,
       cacheHitRate: `${audioHitRate}%`
     },
-    modelUsed: "gemini-1.5-flash"
+    modelUsed: "gemini-3.1-flash-lite"
   });
 });
 

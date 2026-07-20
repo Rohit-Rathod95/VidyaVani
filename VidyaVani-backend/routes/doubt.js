@@ -305,7 +305,7 @@ function buildSSML(text) {
 // Helper: Call Gemini
 async function callGemini(prompt) {
   try {
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const model = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite" });
     const result = await model.generateContent(prompt);
     return result.response.text().trim() || "";
   } catch (err) {

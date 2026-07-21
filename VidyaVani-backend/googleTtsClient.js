@@ -1,12 +1,26 @@
 const textToSpeech = require('@google-cloud/text-to-speech');
 const fs = require('fs');
+const path = require('path');
 
 const clientOptions = {};
 
 if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+  let resolvedPath = path.resolve(process.env.GOOGLE_APPLICATION_CREDENTIALS);
+  
+  // If the resolved path doesn't exist, check fallback in the backend root directory
+  if (!fs.existsSync(resolvedPath)) {
+    const filename = path.basename(process.env.GOOGLE_APPLICATION_CREDENTIALS);
+    const fallbackPath = path.join(__dirname, filename);
+    if (fs.existsSync(fallbackPath)) {
+      resolvedPath = fallbackPath;
+    }
+  }
+
   // Check if it is a valid file path on the filesystem
-  if (fs.existsSync(process.env.GOOGLE_APPLICATION_CREDENTIALS)) {
-    clientOptions.keyFilename = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+  if (fs.existsSync(resolvedPath)) {
+    clientOptions.keyFilename = resolvedPath;
+    // Overwrite env variable so the underlying Google Auth library uses the absolute path
+    process.env.GOOGLE_APPLICATION_CREDENTIALS = resolvedPath;
   } else {
     // If they provided raw JSON credential string content
     try {

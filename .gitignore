@@ -1,6 +1,7 @@
 # Backend
 VidyaVani-backend/.env*
 VidyaVani-backend/node_modules/
+VidyaVani-backend/google_app_cred.jsons
 
 # Credentials & keys (Google Service Account keys)
 *.key.json

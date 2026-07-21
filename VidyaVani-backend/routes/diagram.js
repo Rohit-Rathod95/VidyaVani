@@ -2,6 +2,9 @@
 const express = require("express");
 const router = express.Router();
 const NodeCache = require('node-cache');
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 
 // -------------------------------------------------------
@@ -29,6 +32,24 @@ const VALID_LANGUAGES = ['English', 'Hindi', 'Marathi', 'Tamil', 'Telugu', 'Kann
 // -------------------------------------------------------
 function getDiagramCacheKey(topic, grade, style) {
   return `img_${topic.toLowerCase().trim()}_${grade}_${style}`;
+}
+
+// -------------------------------------------------------
+// HELPER: Generate Topic-Specific Visual Description using Gemini
+// -------------------------------------------------------
+async function getTopicVisualDescription(topic, grade, style) {
+  const prompt = `You are creating a visual specification for an educational diagram. Topic: ${topic}. Grade level: ${grade}. Style: ${style}. 
+Describe in 2-3 sentences the SPECIFIC visual elements, objects, and their spatial/logical relationships that should appear in this diagram. Be concrete and topic-specific — name actual objects, not generic shapes. Do not describe colors or art style, only content and structure.`;
+  
+  try {
+    const model = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite" });
+    const result = await model.generateContent(prompt);
+    return result.response.text().trim();
+  } catch (err) {
+    console.error("❌ Gemini visual description generation error:", err.message);
+    // Fallback: description derived from topic
+    return `A clear, educational diagram illustrating the components and structure of ${topic}`;
+  }
 }
 
 // -------------------------------------------------------
@@ -144,6 +165,7 @@ function sanitizePromptInput(text) {
 router.post("/", async (req, res) => {
   try {
     const { topic, grade, language, style } = req.body;
+    console.log("📥 Raw topic received in diagram route:", topic);
 
     // Validation
     if (!topic) {
@@ -187,6 +209,7 @@ router.post("/", async (req, res) => {
 
     // 🔥 CHECK CACHE FIRST
     const cacheKey = getDiagramCacheKey(sanitizedTopic, gradeLevel, diagramStyle);
+    console.log("🔑 Cache key generated for diagramCache:", cacheKey);
     const cachedDiagram = diagramCache.get(cacheKey);
     
     if (cachedDiagram) {
@@ -194,6 +217,7 @@ router.post("/", async (req, res) => {
       const totalRequests = imageApiCallCount + imageCacheHitCount;
       const savingsPercent = ((imageCacheHitCount / totalRequests) * 100).toFixed(1);
       
+      console.log("🎯 Cache HIT - returned from cache");
       console.log(`✅ Diagram Cache HIT for: ${cacheKey} - FREE!`);
       console.log(`📊 Image Stats - API Calls: ${imageApiCallCount}, Cache Hits: ${imageCacheHitCount}, Savings: ${savingsPercent}%`);
       
@@ -209,43 +233,37 @@ router.post("/", async (req, res) => {
       });
     }
     
+    console.log("⚡ Cache MISS - making a fresh API call");
     console.log(`❌ Diagram Cache MISS for: ${cacheKey} - Using API`);
 
-    // Enhanced prompt styles
-    const promptStyles = {
-      iconic: {
-        prompt: `Educational icon diagram illustrating ${sanitizedTopic}, simple geometric icons and symbols, arrows showing relationships and flow, minimalist flat design, pastel color palette, white background, infographic style, clear visual hierarchy, suitable for grade ${gradeLevel} students, no text labels, visual communication only`,
-        negative: "text, letters, words, labels, annotations, complex details, realistic photography, cluttered, messy, blurry"
-      },
-      
-      abstract: {
-        prompt: `Abstract visual concept map of ${sanitizedTopic}, flowing organic shapes with connecting lines, modern minimal design, color-coded elements representing different aspects, clean geometric composition, white background, educational infographic aesthetic, suitable for grade ${gradeLevel}, clear visual hierarchy`,
-        negative: "text, writing, labels, realistic photography, cluttered, detailed textures, messy"
-      },
-      
-      flow: {
-        prompt: `Flowchart style visualization of ${sanitizedTopic}, colorful rectangular and rounded boxes connected by directional arrows, organized hierarchical layout, clean modern flat design, white background, simple geometric style, process flow diagram, clear progression, suitable for grade ${gradeLevel} education`,
-        negative: "text inside boxes, labels, words, annotations, realistic style, photographic, complex details, messy"
-      },
-      
-      illustration: {
-        prompt: `Educational cartoon illustration of ${sanitizedTopic}, simple friendly drawing style, clear visual metaphor, bright appealing colors, white background, child-friendly design for grade ${gradeLevel} students, clean vector art aesthetic, bold outlines, easy to understand visual`,
-        negative: "text, labels, words, captions, realistic photo style, complex details, messy, dark, scary"
-      },
+    // STEP 1: Generate topic-specific visual description using Gemini
+    console.log(`🧠 Calling Gemini to generate visual description for: "${sanitizedTopic}"`);
+    const geminiVisualDescription = await getTopicVisualDescription(sanitizedTopic, gradeLevel, diagramStyle);
+    console.log(`📝 Generated Visual Description: "${geminiVisualDescription}"`);
 
-      diagram: {
-        prompt: `Scientific educational diagram of ${sanitizedTopic}, clean technical illustration style, color-coded components, clear visual structure, white background, organized layout suitable for grade ${gradeLevel}, simplified schematic style, easy to understand visual representation`,
-        negative: "text labels, words, annotations, photorealistic, cluttered, complex details, messy"
-      }
+    // STEP 2: Map the style/aesthetic parameters
+    const stylePhrases = {
+      iconic: "flat minimalist educational icon diagram style, simple geometric icons and symbols",
+      abstract: "abstract educational concept map style, flowing organic shapes with connecting lines",
+      flow: "flowchart style process flow diagram, simplified boxes and connecting arrows showing sequence",
+      illustration: "educational cartoon illustration style, friendly drawings with bold outlines and clear visual metaphors",
+      diagram: "scientific schematic educational diagram style, clean technical layout showing structured components"
     };
 
-    const selectedStyle = promptStyles[diagramStyle] || promptStyles.iconic;
+    const stylePhrase = stylePhrases[diagramStyle] || stylePhrases.iconic;
 
+    // Build the final combined prompt
+    const pollinationsPrompt = `${geminiVisualDescription}, illustrated in a ${stylePhrase}, pastel color palette, white background, no text labels, suitable for grade ${gradeLevel} students`;
+    
+    console.log(`🎨 Final Pollinations Prompt: "${pollinationsPrompt}"`);
     console.log(`🎨 Generating diagram for: "${sanitizedTopic}" (Style: ${diagramStyle})`);
 
     let imageBase64;
     try {
-      const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(selectedStyle.prompt)}?width=1024&height=1024&nologo=true`;
+      // STEP 3: Add a random seed parameter to avoid repetition
+      const seed = Math.floor(Math.random() * 2147483647);
+      const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(pollinationsPrompt)}?width=1024&height=1024&nologo=true&seed=${seed}`;
+      console.log("🌐 Pollinations URL requested:", url);
       console.log(`🌐 Requesting Pollinations.ai image: ${url}`);
 
       const imageRes = await fetch(url);

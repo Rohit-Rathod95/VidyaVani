@@ -1,19 +1,10 @@
 // routes/diagram.js
 const express = require("express");
 const router = express.Router();
-const NodeCache = require('node-cache');
+const { getCache, setCache, delCache, clearCacheByPattern, countCacheByPattern } = require("../utils/redisClient");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-
-
-// -------------------------------------------------------
-// CACHE SETUP (7 days TTL)
-// -------------------------------------------------------
-const diagramCache = new NodeCache({ 
-  stdTTL: 604800, // 7 days
-  checkperiod: 86400
-});
 
 // -------------------------------------------------------
 // TRACKING STATS
@@ -210,7 +201,7 @@ router.post("/", async (req, res) => {
     // 🔥 CHECK CACHE FIRST
     const cacheKey = getDiagramCacheKey(sanitizedTopic, gradeLevel, diagramStyle);
     console.log("🔑 Cache key generated for diagramCache:", cacheKey);
-    const cachedDiagram = diagramCache.get(cacheKey);
+    const cachedDiagram = await getCache(cacheKey);
     
     if (cachedDiagram) {
       imageCacheHitCount++;
@@ -282,8 +273,8 @@ router.post("/", async (req, res) => {
       });
     }
 
-    // 🔥 STORE IN CACHE
-    diagramCache.set(cacheKey, { imageBase64, style: diagramStyle });
+    // 🔥 STORE IN CACHE (7 days TTL)
+    await setCache(cacheKey, { imageBase64, style: diagramStyle }, 604800);
     console.log(`💾 Cached diagram for: ${cacheKey}`);
 
     imageApiCallCount++;
@@ -438,20 +429,20 @@ function getSuggestedStyle(topic) {
 // -------------------------------------------------------
 // ENDPOINT: Image Stats
 // -------------------------------------------------------
-router.get("/stats", (req, res) => {
+router.get("/stats", async (req, res) => {
   const totalRequests = imageApiCallCount + imageCacheHitCount;
   const cacheHitRate = totalRequests > 0 
     ? ((imageCacheHitCount / totalRequests) * 100).toFixed(2) 
     : 0;
   
-  const cachedKeys = diagramCache.keys();
+  const cachedDiagrams = await countCacheByPattern("img_*");
 
   res.json({
     totalRequests,
     apiCalls: imageApiCallCount,
     cacheHits: imageCacheHitCount,
     cacheHitRate: `${cacheHitRate}%`,
-    cachedDiagrams: cachedKeys.length,
+    cachedDiagrams,
     message: `Saving ${cacheHitRate}% of image generation quota! 🎨`
   });
 });
@@ -459,12 +450,12 @@ router.get("/stats", (req, res) => {
 // -------------------------------------------------------
 // ENDPOINT: Clear Cache
 // -------------------------------------------------------
-router.delete("/cache", (req, res) => {
+router.delete("/cache", async (req, res) => {
   const { topic, grade, style } = req.query;
   
   if (topic && grade && style) {
     const cacheKey = getDiagramCacheKey(topic, parseInt(grade), style);
-    const deleted = diagramCache.del(cacheKey);
+    const deleted = await delCache(cacheKey);
     
     if (deleted) {
       res.json({ 
@@ -478,8 +469,7 @@ router.delete("/cache", (req, res) => {
       });
     }
   } else {
-    const keysCleared = diagramCache.keys().length;
-    diagramCache.flushAll();
+    const keysCleared = await clearCacheByPattern("img_*");
     
     res.json({ 
       message: "All diagram cache cleared",

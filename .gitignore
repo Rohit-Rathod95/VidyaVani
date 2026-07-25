@@ -1,24 +1,67 @@
-# Backend
+# Environment variables & secrets
+.env
+.env.*
+*.env
+**/.env
+**/.env.*
 VidyaVani-backend/.env*
-VidyaVani-backend/node_modules/
-VidyaVani-backend/google_app_cred.jsons
+VidyaVani-backend/rag/.env*
 
-# Credentials & keys (Google Service Account keys)
+# Google Cloud & AWS Credentials / Keys
+google_app_cred.json
 *.key.json
 *credentials*.json
 google-credentials.json
 credentials.json
 key.json
-service-account.json
+service-account*.json
+**/*credentials*.json
+**/*service-account*.json
 
-# Root secrets & dependencies
-.env
-.env.*
+# Node.js dependencies & build outputs
 node_modules/
+**/node_modules/
+dist/
+**/dist/
+dist-ssr/
+build/
+.next/
+out/
+
+# Python Virtual Environments & Bytecode
+venv/
+.venv/
+**/venv/
+**/.venv/
+__pycache__/
+/**/__pycache__/
+*.pyc
+*.pyo
+*.pyd 
+VidyaVani-backend/pg8000-layer/python/
+
+# Build artifacts & archives
+*.zip
+*.tar.gz
+VidyaVani-backend/pg8000-layer/*.zip
+
+# Large data files / PDFs
+VidyaVani-backend/rag/*.pdf
+
+# Logs
+*.log
+**/logs/
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
 
 # IDEs & System files
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
-*.log
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

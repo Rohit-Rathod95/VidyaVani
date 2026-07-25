@@ -3,25 +3,11 @@
 // ============================================
 const express = require("express");
 const router = express.Router();
-const NodeCache = require('node-cache');
+const { getCache, setCache, clearCacheByPattern, countCacheByPattern } = require("../utils/redisClient");
 
 const ttsClient = require("../googleTtsClient");
-
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-
-// -------------------------------------------------------
-// SHARED CACHE (7 days for lessons, 1 hour for audio)
-// -------------------------------------------------------
-const lessonCache = new NodeCache({ 
-  stdTTL: 604800,
-  checkperiod: 86400
-});
-
-const audioCache = new NodeCache({ 
-  stdTTL: 604800, // 7 days (synchronized with lessonCache)
-  checkperiod: 86400 // 24 hours
-});
 
 let apiCallCount = 0;
 let cacheHitCount = 0;
@@ -155,7 +141,7 @@ function buildSSML(text) {
 async function generateAudioForText(text, language, cacheKey = null) {
   // Check audio cache first if cacheKey provided
   if (cacheKey) {
-    const cached = audioCache.get(cacheKey);
+    const cached = await getCache(cacheKey);
     if (cached) {
       audioCacheHits++;
       console.log(`✅ Audio Cache HIT: ${cacheKey}`);
@@ -198,9 +184,9 @@ async function generateAudioForText(text, language, cacheKey = null) {
     cached: false
   };
 
-  // Cache the audio if cacheKey provided
+  // Cache the audio if cacheKey provided (7 days TTL)
   if (cacheKey) {
-    audioCache.set(cacheKey, result);
+    await setCache(cacheKey, result, 604800);
     console.log(`💾 Cached audio: ${cacheKey}`);
   }
 
@@ -209,11 +195,84 @@ async function generateAudioForText(text, language, cacheKey = null) {
 }
 
 // -------------------------------------------------------
+// HELPER: RAG Retrieval & Source Extraction
+// -------------------------------------------------------
+const RAG_ENDPOINT = "https://s4g4c6g1v9.execute-api.us-east-1.amazonaws.com/retrieve";
+const RAG_TIMEOUT_MS = 8000;
+const RAG_SIMILARITY_THRESHOLD = 0.6;
+
+async function fetchRagChunks(topic, grade, subject) {
+  try {
+    const payload = {
+      query: topic,
+      top_k: 5,
+      grade: grade
+    };
+    if (subject) {
+      payload.subject = subject;
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), RAG_TIMEOUT_MS);
+
+    const response = await fetch(RAG_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      console.warn(`⚠️ RAG API returned non-OK status: ${response.status}`);
+      return [];
+    }
+
+    const data = await response.json();
+    if (!data || !Array.isArray(data.chunks)) {
+      console.warn("⚠️ RAG API response missing chunks array");
+      return [];
+    }
+
+    return data.chunks;
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      console.warn(`⚠️ RAG API call timed out after ${RAG_TIMEOUT_MS}ms`);
+    } else {
+      console.warn("⚠️ RAG API call failed:", err.message);
+    }
+    return [];
+  }
+}
+
+function filterRelevantChunks(chunks) {
+  if (!Array.isArray(chunks)) return [];
+  return chunks.filter(c => typeof c.similarity === 'number' && c.similarity >= RAG_SIMILARITY_THRESHOLD);
+}
+
+function extractSources(chunks) {
+  if (!Array.isArray(chunks) || chunks.length === 0) return [];
+  const seen = new Set();
+  const sources = [];
+  for (const chunk of chunks) {
+    const chapter = chunk.chapter || "";
+    const page = chunk.page;
+    const key = `${chapter}___${page}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      sources.push({ chapter, page });
+    }
+  }
+  return sources;
+}
+
+// -------------------------------------------------------
 // MAIN ROUTE - GENERATE LESSON WITH AUTO-AUDIO
 // -------------------------------------------------------
 router.post("/", async (req, res) => {
   try {
-    const { topic, grade, language } = req.body;
+    const { topic, grade, language, subject } = req.body || {};
 
     if (!topic) {
       return res.status(400).json({ error: "Topic is required" });
@@ -234,7 +293,7 @@ router.post("/", async (req, res) => {
 
     // Check lesson cache
     const lessonCacheKey = getLessonCacheKey(sanitizedTopic, gradeLevel, lang);
-    const cachedLesson = lessonCache.get(lessonCacheKey);
+    const cachedLesson = await getCache(lessonCacheKey);
     
     if (cachedLesson) {
       cacheHitCount++;
@@ -269,6 +328,13 @@ router.post("/", async (req, res) => {
     
     console.log(`❌ Lesson Cache MISS: ${lessonCacheKey}`);
 
+    // Call RAG API with timeout and error fallback
+    console.log(`🔍 Fetching RAG chunks for topic: "${sanitizedTopic}", grade: ${gradeLevel}`);
+    const rawChunks = await fetchRagChunks(sanitizedTopic, gradeLevel, subject);
+    const relevantChunks = filterRelevantChunks(rawChunks);
+    const sources = extractSources(relevantChunks);
+    console.log(`📚 RAG retrieved ${rawChunks.length} chunks (${relevantChunks.length} above similarity threshold)`);
+
     // Generate lesson content
     let lessonContent = null;
     let attempts = 0;
@@ -276,7 +342,7 @@ router.post("/", async (req, res) => {
 
     while (attempts < maxAttempts && !lessonContent) {
       try {
-        lessonContent = await generateLesson(sanitizedTopic, gradeLevel, lang);
+        lessonContent = await generateLesson(sanitizedTopic, gradeLevel, lang, relevantChunks);
         if (!lessonContent || lessonContent.length < 100) {
           lessonContent = null;
           attempts++;
@@ -303,13 +369,14 @@ router.post("/", async (req, res) => {
       title: `${sanitizedTopic} - Grade ${gradeLevel}`,
       ...parsedLesson,
       quiz: quiz,
+      sources: sources,
       language: lang,
       grade: gradeLevel,
       timestamp: new Date().toISOString()
     };
 
-    // Cache lesson
-    lessonCache.set(lessonCacheKey, lesson);
+    // Cache lesson (7 days TTL)
+    await setCache(lessonCacheKey, lesson, 604800);
     console.log(`💾 Cached lesson: ${lessonCacheKey}`);
     apiCallCount++;
 
@@ -359,12 +426,21 @@ router.post("/", async (req, res) => {
 // -------------------------------------------------------
 // GENERATE LESSON HELPER
 // -------------------------------------------------------
-async function generateLesson(topic, grade, language) {
+async function generateLesson(topic, grade, language, chunks = []) {
   const languageNote = language !== 'English' 
     ? `CRITICAL: You MUST write your ENTIRE response in ${language} language.`
     : '';
 
-  const prompt = `You are an expert teacher for grade ${grade} students.
+  let groundingText = "";
+  if (Array.isArray(chunks) && chunks.length > 0) {
+    const excerpts = chunks.map((chunk, index) => 
+      `[Excerpt ${index + 1} - Page ${chunk.page || 'N/A'}]: ${chunk.text}`
+    ).join("\n\n");
+
+    groundingText = `Use the following textbook excerpts as your primary source of truth when generating this lesson. If the excerpts don't fully cover the topic, you may supplement with your own knowledge, but prioritize accuracy to these excerpts:\n\n${excerpts}\n\n`;
+  }
+
+  const prompt = `${groundingText}You are an expert teacher for grade ${grade} students.
 ${languageNote}
 
 Create a complete lesson about: ${topic}
@@ -477,7 +553,7 @@ function generateFallbackContent(topic, grade, language) {
 // -------------------------------------------------------
 // STATS ENDPOINT
 // -------------------------------------------------------
-router.get("/stats", (req, res) => {
+router.get("/stats", async (req, res) => {
   const totalLessonRequests = apiCallCount + cacheHitCount;
   const lessonHitRate = totalLessonRequests > 0 
     ? ((cacheHitCount / totalLessonRequests) * 100).toFixed(2) 
@@ -488,18 +564,23 @@ router.get("/stats", (req, res) => {
     ? ((audioCacheHits / totalAudioRequests) * 100).toFixed(2)
     : 0;
 
+  const cachedLessonsCount = await countCacheByPattern("lesson_*");
+  const cachedAudioCount = await countCacheByPattern("audio_*");
+
   res.json({
     lessons: {
       totalRequests: totalLessonRequests,
       apiCalls: apiCallCount,
       cacheHits: cacheHitCount,
-      cacheHitRate: `${lessonHitRate}%`
+      cacheHitRate: `${lessonHitRate}%`,
+      cachedInRedis: cachedLessonsCount
     },
     audio: {
       totalRequests: totalAudioRequests,
       apiCalls: audioApiCalls,
       cacheHits: audioCacheHits,
-      cacheHitRate: `${audioHitRate}%`
+      cacheHitRate: `${audioHitRate}%`,
+      cachedInRedis: cachedAudioCount
     },
     modelUsed: "gemini-3.1-flash-lite"
   });
@@ -508,12 +589,9 @@ router.get("/stats", (req, res) => {
 // -------------------------------------------------------
 // CLEAR CACHE ENDPOINT
 // -------------------------------------------------------
-router.delete("/cache", (req, res) => {
-  const lessonKeys = lessonCache.keys().length;
-  const audioKeys = audioCache.keys().length;
-  
-  lessonCache.flushAll();
-  audioCache.flushAll();
+router.delete("/cache", async (req, res) => {
+  const lessonKeys = await clearCacheByPattern("lesson_*");
+  const audioKeys = await clearCacheByPattern("audio_*");
   
   res.json({ 
     message: "All caches cleared",

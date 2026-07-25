@@ -1,17 +1,9 @@
 // routes/audio.js
 const express = require("express");
 const router = express.Router();
-const NodeCache = require('node-cache');
+const { getCache, setCache, clearCacheByPattern, countCacheByPattern } = require("../utils/redisClient");
 
 const ttsClient = require("../googleTtsClient");
-
-// -------------------------------------------------------
-// CACHE SETUP (24 hours TTL for audio)
-// -------------------------------------------------------
-const audioCache = new NodeCache({ 
-  stdTTL: 86400, // 24 hours (audio files are larger)
-  checkperiod: 3600 // Check every hour
-});
 
 // -------------------------------------------------------
 // TRACKING STATS
@@ -78,7 +70,7 @@ router.post("/", async (req, res) => {
 
     // 🔥 CHECK CACHE FIRST
     const cacheKey = getAudioCacheKey(cleanText, voiceConfig.voiceId, voiceConfig.languageCode);
-    const cachedAudio = audioCache.get(cacheKey);
+    const cachedAudio = await getCache(cacheKey);
     
     if (cachedAudio) {
       audioCacheHitCount++;
@@ -132,9 +124,10 @@ router.post("/", async (req, res) => {
 
     const duration = estimateDuration(cleanText);
 
-    // 🔥 STORE IN CACHE
-    audioCache.set(cacheKey, { audioBase64, duration });
-    console.log(`💾 Cached audio for: ${cacheKey.substring(0, 50)}...`);
+    // 🔥 STORE IN CACHE (24 hours = 86400 seconds)
+    const result = { audioBase64, duration };
+    await setCache(cacheKey, result, 86400);
+    console.log(`💾 Cached audio: ${cacheKey.substring(0, 50)}...`);
 
     // Track API usage
     audioApiCallCount++;
@@ -276,7 +269,7 @@ router.post("/lesson", async (req, res) => {
 
     // 🔥 CHECK CACHE FIRST (using lesson title + language as key)
     const lessonCacheKey = `lesson_${lesson.title}_${voiceConfig.voiceId}_${voiceConfig.languageCode}`;
-    const cachedLessonAudio = audioCache.get(lessonCacheKey);
+    const cachedLessonAudio = await getCache(lessonCacheKey);
     
     if (cachedLessonAudio) {
       audioCacheHitCount++;
@@ -353,9 +346,10 @@ router.post("/lesson", async (req, res) => {
 
     const duration = estimateDuration(fullText);
 
-    // 🔥 STORE IN CACHE
-    audioCache.set(lessonCacheKey, { audioBase64, duration });
-    console.log(`💾 Cached lesson audio for: ${lesson.title}`);
+    // 🔥 STORE IN CACHE (24 hours = 86400 seconds)
+    const result = { audioBase64, duration };
+    await setCache(lessonCacheKey, result, 86400);
+    console.log(`💾 Cached lesson audio: ${lessonCacheKey}`);
 
     // Track API usage
     audioApiCallCount++;
@@ -413,20 +407,20 @@ router.post("/lesson", async (req, res) => {
 // -------------------------------------------------------
 // ENDPOINT: Audio Stats
 // -------------------------------------------------------
-router.get("/stats", (req, res) => {
+router.get("/stats", async (req, res) => {
   const totalRequests = audioApiCallCount + audioCacheHitCount;
   const cacheHitRate = totalRequests > 0 
     ? ((audioCacheHitCount / totalRequests) * 100).toFixed(2) 
     : 0;
   
-  const cachedKeys = audioCache.keys();
+  const cachedAudioFiles = await countCacheByPattern("audio_*");
 
   res.json({
     totalRequests,
     apiCalls: audioApiCallCount,
     cacheHits: audioCacheHitCount,
     cacheHitRate: `${cacheHitRate}%`,
-    cachedAudioFiles: cachedKeys.length,
+    cachedAudioFiles,
     message: `Saving ${cacheHitRate}% of audio generation quota! 🎧`,
     tip: audioApiCallCount > audioCacheHitCount 
       ? "Generate audio for the same content to improve cache efficiency!"
@@ -437,9 +431,8 @@ router.get("/stats", (req, res) => {
 // -------------------------------------------------------
 // ENDPOINT: Clear Audio Cache
 // -------------------------------------------------------
-router.delete("/cache", (req, res) => {
-  const keysCleared = audioCache.keys().length;
-  audioCache.flushAll();
+router.delete("/cache", async (req, res) => {
+  const keysCleared = await clearCacheByPattern("audio_*");
   
   res.json({ 
     message: "All audio cache cleared",

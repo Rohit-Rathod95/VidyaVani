@@ -1,22 +1,11 @@
 const express = require("express");
 const routerDoubt = express.Router();
-const NodeCache = require('node-cache');
+const { getCache, setCache, clearCacheByPattern, countCacheByPattern } = require("../utils/redisClient");
 
 const ttsClient = require("../googleTtsClient");
 
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-
-// Shared caches
-const doubtCache = new NodeCache({ 
-  stdTTL: 3600, // 1 hour
-  checkperiod: 600 
-});
-
-const doubtAudioCache = new NodeCache({
-  stdTTL: 3600, // 1 hour
-  checkperiod: 600
-});
 
 let doubtApiCalls = 0;
 let doubtCacheHits = 0;
@@ -111,7 +100,7 @@ routerDoubt.post("/", async (req, res) => {
 
     // Check doubt cache
     const doubtCacheKey = getDoubtCacheKey(sanitizedQuestion, gradeLevel, lang);
-    const cachedAnswer = doubtCache.get(doubtCacheKey);
+    const cachedAnswer = await getCache(doubtCacheKey);
     
     if (cachedAnswer) {
       doubtCacheHits++;
@@ -168,8 +157,8 @@ Provide a clear, simple answer in ${lang} suitable for grade ${gradeLevel} stude
       throw new Error("Generated answer too short or empty");
     }
 
-    // Cache the answer
-    doubtCache.set(doubtCacheKey, cleanAnswer);
+    // Cache the answer (1 hour TTL = 3600 seconds)
+    await setCache(doubtCacheKey, cleanAnswer, 3600);
     console.log(`💾 Cached doubt answer`);
     doubtApiCalls++;
 
@@ -224,7 +213,7 @@ Provide a clear, simple answer in ${lang} suitable for grade ${gradeLevel} stude
 async function generateDoubtAudio(text, language, cacheKey = null) {
   // Check cache first
   if (cacheKey) {
-    const cached = doubtAudioCache.get(cacheKey);
+    const cached = await getCache(cacheKey);
     if (cached) {
       doubtAudioCacheHits++;
       console.log(`✅ Doubt Audio Cache HIT`);
@@ -267,7 +256,7 @@ async function generateDoubtAudio(text, language, cacheKey = null) {
   };
 
   if (cacheKey) {
-    doubtAudioCache.set(cacheKey, result);
+    await setCache(cacheKey, result, 3600);
     console.log(`💾 Cached doubt audio`);
   }
 
@@ -356,12 +345,9 @@ routerDoubt.get("/stats", (req, res) => {
 });
 
 // Clear cache
-routerDoubt.delete("/cache", (req, res) => {
-  const doubtKeys = doubtCache.keys().length;
-  const audioKeys = doubtAudioCache.keys().length;
-  
-  doubtCache.flushAll();
-  doubtAudioCache.flushAll();
+routerDoubt.delete("/cache", async (req, res) => {
+  const doubtKeys = await clearCacheByPattern("doubt_*");
+  const audioKeys = await clearCacheByPattern("doubt_audio_*");
   
   res.json({ 
     message: "Doubt caches cleared",
